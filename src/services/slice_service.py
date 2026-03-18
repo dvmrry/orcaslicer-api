@@ -287,6 +287,12 @@ class SliceService:
             if machine_file:
                 settings_files.append(str(machine_file))
 
+        # Create filament settings file with flattened inheritance
+        if profile.filament_id:
+            filament_file = await self._create_filament_settings_file(work_dir, profile)
+            if filament_file:
+                settings_files.append(str(filament_file))
+
         # Create process settings file with profile and overrides
         if profile.settings_overrides or overrides:
             settings_file = await self._create_settings_file(work_dir, profile, overrides)
@@ -329,6 +335,46 @@ class SliceService:
 
         logger.debug(f"Created machine settings file: {profile.machine_id}")
         return machine_file
+
+    def _resolve_filament_chain(self, name: str) -> dict:
+        """Resolve full filament profile inheritance chain from system profiles."""
+        base = Path(settings.orca_cli_path).parent / "resources" / "profiles" / "BBL" / "filament"
+        target = base / f"{name}.json"
+        if not target.exists():
+            return {}
+        with open(target) as f:
+            data = json.load(f)
+        parent = data.get("inherits", "")
+        if parent:
+            parent_data = self._resolve_filament_chain(parent)
+            parent_data.update(data)
+            return parent_data
+        return data
+
+    async def _create_filament_settings_file(
+        self,
+        work_dir: Path,
+        profile: Profile,
+    ) -> Optional[Path]:
+        """Create filament settings JSON with flattened inheritance."""
+        if not profile.filament_id:
+            return None
+        filament_data = self._resolve_filament_chain(profile.filament_id)
+        filament_data["type"] = "filament"
+        filament_data["name"] = profile.filament_id
+        filament_data["from"] = "system"
+        # OrcaSlicer CLI defaults to cool_plate bed type regardless of bed_type setting.
+        # Force cool_plate temps to match textured_plate temps so correct bed temp is used.
+        if filament_data.get("textured_plate_temp"):
+            filament_data["cool_plate_temp"] = filament_data["textured_plate_temp"]
+            filament_data["cool_plate_temp_initial_layer"] = filament_data.get(
+                "textured_plate_temp_initial_layer", filament_data["textured_plate_temp"]
+            )
+        filament_file = work_dir / "filament.json"
+        with open(filament_file, "w") as f:
+            json.dump(filament_data, f, indent=2)
+        logger.debug(f"Created filament settings file: {profile.filament_id}")
+        return filament_file
 
     async def _create_settings_file(
         self,
