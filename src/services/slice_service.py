@@ -277,11 +277,24 @@ class SliceService:
         # Set output directory
         cmd.extend(["--outputdir", str(output_dir)])
 
-        # Create settings file with profile and overrides if there are any settings
+        # Create machine and process settings files
+        # OrcaSlicer requires both machine and process settings to validate compatibility
+        settings_files = []
+
+        # Always create a machine settings file if machine_id is specified
+        if profile.machine_id:
+            machine_file = await self._create_machine_settings_file(work_dir, profile)
+            if machine_file:
+                settings_files.append(str(machine_file))
+
+        # Create process settings file with profile and overrides
         if profile.settings_overrides or overrides:
             settings_file = await self._create_settings_file(work_dir, profile, overrides)
             if settings_file:
-                cmd.extend(["--load-settings", str(settings_file)])
+                settings_files.append(str(settings_file))
+
+        if settings_files:
+            cmd.extend(["--load-settings", ";".join(settings_files)])
 
         # Add slice flag (0 = slice all plates)
         cmd.extend(["--slice", "0"])
@@ -296,6 +309,26 @@ class SliceService:
         logger.debug(f"Built OrcaSlicer command: {' '.join(cmd)}")
 
         return cmd
+
+    async def _create_machine_settings_file(
+        self,
+        work_dir: Path,
+        profile: Profile,
+    ) -> Optional[Path]:
+        """Create a machine settings JSON file for OrcaSlicer."""
+        machine_data = {
+            "type": "machine",
+            "name": profile.machine_id,
+            "inherits": profile.machine_id,
+            "from": "system",
+        }
+
+        machine_file = work_dir / "machine.json"
+        with open(machine_file, "w") as f:
+            json.dump(machine_data, f, indent=2)
+
+        logger.debug(f"Created machine settings file: {profile.machine_id}")
+        return machine_file
 
     async def _create_settings_file(
         self,
