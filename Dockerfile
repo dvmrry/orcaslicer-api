@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Download and install OrcaSlicer
-ARG ORCA_VERSION=2.3.1
+ARG ORCA_VERSION=2.3.2-rc2
 
 
 RUN curl -L https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v${ORCA_VERSION}/OrcaSlicer_Linux_AppImage_Ubuntu2404_V${ORCA_VERSION}.AppImage -o OrcaSlicer.AppImage
