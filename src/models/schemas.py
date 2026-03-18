@@ -107,9 +107,9 @@ class SliceJobCreate(BaseModel):
 class BoundingBox(BaseModel):
     """Bounding box."""
 
-    x: float
-    y: float
-    z: float
+    x: Optional[float] = None
+    y: Optional[float] = None
+    z: Optional[float] = None
 
 
 class SliceMetadata(BaseModel):
