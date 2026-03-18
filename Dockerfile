@@ -50,8 +50,10 @@ RUN .venv/bin/pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 
-# Create data directory
-RUN mkdir -p /data
+# Create data directory and set up OrcaSlicer profile datadir
+RUN mkdir -p /data /app/orca-config/system && \
+    ln -sf /app/squashfs-root/resources/profiles/BBL /app/orca-config/system/BBL && \
+    cp /app/squashfs-root/resources/profiles/BBL.json /app/orca-config/system/BBL.json
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
