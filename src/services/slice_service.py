@@ -376,6 +376,13 @@ class SliceService:
             "build_plate_detect_flag=0",
         )
 
+        # Strip plate type detection command — pauses for confirmation
+        gcode = re.sub(
+            r'^\s*M972 S19\s.*$',
+            '; M972 S19 disabled (skip plate detection)',
+            gcode, flags=re.MULTILINE,
+        )
+
         # Remove AMS remap enable
         gcode = re.sub(r'^\s*M620 M\s*;.*$', '; M620 M disabled (external spool)', gcode, flags=re.MULTILINE)
         gcode = re.sub(r'^\s*G389\s*$', '; G389 disabled (external spool)', gcode, flags=re.MULTILINE)
