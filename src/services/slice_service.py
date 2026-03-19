@@ -345,7 +345,15 @@ class SliceService:
             "from": "system",
         }
         if resolved.get("machine_start_gcode"):
-            machine_data["machine_start_gcode"] = resolved["machine_start_gcode"]
+            start_gcode = resolved["machine_start_gcode"]
+            # Disable build plate detection — OrcaSlicer CLI sets curr_bed_type
+            # based on cool_plate_temp override which mismatches the actual plate,
+            # causing detection to fail and abort the print.
+            start_gcode = start_gcode.replace(
+                "build_plate_detect_flag=1",
+                "build_plate_detect_flag=0",
+            )
+            machine_data["machine_start_gcode"] = start_gcode
         if resolved.get("machine_end_gcode"):
             machine_data["machine_end_gcode"] = resolved["machine_end_gcode"]
 
