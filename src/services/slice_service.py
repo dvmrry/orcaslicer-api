@@ -395,6 +395,19 @@ class SliceService:
         gcode = re.sub(r'^\s*M628 S0\s*$', '; M628 disabled (external spool)', gcode, flags=re.MULTILINE)
         gcode = re.sub(r'^\s*M629\s*$', '; M629 disabled (external spool)', gcode, flags=re.MULTILINE)
 
+        # Remove tool change commands inside filament switch blocks
+        # T[initial_no_support_extruder] triggers filament load at cold nozzle = motor overload
+        gcode = re.sub(
+            r'^\s*T\[initial_no_support_extruder\]\s*$',
+            '; T[initial_no_support_extruder] disabled (external spool)',
+            gcode, flags=re.MULTILINE,
+        )
+        gcode = re.sub(
+            r'^\s*T\[initial_extruder\]\s*$',
+            '; T[initial_extruder] disabled (external spool)',
+            gcode, flags=re.MULTILINE,
+        )
+
         # Remove flush config commands (AMS purge setup)
         gcode = re.sub(r'^\s*M620\.10\s.*$', '; M620.10 disabled (external spool)', gcode, flags=re.MULTILINE)
         gcode = re.sub(r'^\s*M620\.11\s.*$', '; M620.11 disabled (external spool)', gcode, flags=re.MULTILINE)
