@@ -433,6 +433,11 @@ class SliceService:
         gcode = re.sub(r'^\s*M620\.11\s.*$', '; M620.11 disabled (external spool)', gcode, flags=re.MULTILINE)
         gcode = re.sub(r'^\s*M620\.6\s.*$', '; M620.6 disabled (external spool)', gcode, flags=re.MULTILINE)
 
+        # Fix Z-offset for textured PEI plate. CLI sets curr_bed_type to
+        # "Cool Plate" (because we override cool_plate_temp for correct bed
+        # temp), so the conditional resolves wrong. Force Z0.01 for textured.
+        gcode = gcode.replace("G29.1 Z{0.03}", "G29.1 Z{0.01} ; forced textured PEI offset")
+
         return gcode
 
     def _resolve_filament_chain(self, name: str) -> dict:
@@ -475,13 +480,17 @@ class SliceService:
         # Inject bed temps from filament profile chain.
         # OrcaSlicer CLI ignores filament settings from --load-settings,
         # but accepts bed temp overrides in the process settings file.
-        # Only set the plate temp fields that match the actual bed_type —
-        # overriding cool_plate_temp causes curr_bed_type to resolve as
-        # "Cool Plate" which breaks the Z-offset conditional in start gcode.
+        # CLI hardcodes cool_plate_temp as bed temp regardless of bed_type,
+        # so we must set it. This causes curr_bed_type="Cool Plate" which
+        # breaks the Z-offset conditional — fixed in _patch_start_gcode.
         if profile.filament_id:
             filament_data = self._resolve_filament_chain(profile.filament_id)
             textured_temp = filament_data.get("textured_plate_temp")
             if textured_temp:
+                settings_data["cool_plate_temp"] = textured_temp
+                settings_data["cool_plate_temp_initial_layer"] = filament_data.get(
+                    "textured_plate_temp_initial_layer", textured_temp
+                )
                 settings_data["textured_plate_temp"] = textured_temp
                 settings_data["textured_plate_temp_initial_layer"] = filament_data.get(
                     "textured_plate_temp_initial_layer", textured_temp
