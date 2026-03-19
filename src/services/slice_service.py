@@ -441,6 +441,17 @@ class SliceService:
         # temp), so the conditional resolves wrong. Force Z0.01 for textured.
         gcode = gcode.replace("G29.1 Z{0.03}", "G29.1 Z{0.01} ; forced textured PEI offset")
 
+        # Fix vibration sweep amplitude — older system profile uses A10 (too intense),
+        # current Bambu Studio profile uses A5/A7
+        gcode = gcode.replace("M970.3 Q1 A10 K0 O1", "M970.3 Q1 A5 K0 O1")
+        gcode = gcode.replace("M970.3 Q0 A10 K0 O1", "M970.3 Q0 A7 K0 O1")
+
+        # Fix sound volume — older profile uses L99/M99/N99 (max volume),
+        # current Bambu Studio uses L50/M50/N50
+        gcode = gcode.replace(" L99 ", " L50 ", )
+        gcode = gcode.replace(" M99 ", " M50 ")
+        gcode = gcode.replace(" N99 ", " N50 ")
+
         return gcode
 
     def _resolve_filament_chain(self, name: str) -> dict:
