@@ -310,18 +310,44 @@ class SliceService:
 
         return cmd
 
+    def _resolve_machine_chain(self, name: str) -> dict:
+        """Resolve full machine profile inheritance chain from system profiles."""
+        base = Path(settings.orca_cli_path).parent / "resources" / "profiles" / "BBL" / "machine"
+        target = base / f"{name}.json"
+        if not target.exists():
+            return {}
+        with open(target) as f:
+            data = json.load(f)
+        parent = data.get("inherits", "")
+        if parent:
+            parent_data = self._resolve_machine_chain(parent)
+            parent_data.update(data)
+            return parent_data
+        return data
+
     async def _create_machine_settings_file(
         self,
         work_dir: Path,
         profile: Profile,
     ) -> Optional[Path]:
-        """Create a machine settings JSON file for OrcaSlicer."""
+        """Create a machine settings JSON file for OrcaSlicer.
+
+        Resolves the system machine profile inheritance chain to extract
+        machine_start_gcode and machine_end_gcode (calibration, homing,
+        purge sequences). Only these gcode templates are included — the
+        full profile causes segfaults in headless mode due to thumbnail
+        rendering settings.
+        """
+        resolved = self._resolve_machine_chain(profile.machine_id)
         machine_data = {
             "type": "machine",
             "name": profile.machine_id,
-            "inherits": profile.machine_id,
             "from": "system",
         }
+        if resolved.get("machine_start_gcode"):
+            machine_data["machine_start_gcode"] = resolved["machine_start_gcode"]
+        if resolved.get("machine_end_gcode"):
+            machine_data["machine_end_gcode"] = resolved["machine_end_gcode"]
 
         machine_file = work_dir / "machine.json"
         with open(machine_file, "w") as f:
