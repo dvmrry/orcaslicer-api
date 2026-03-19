@@ -287,12 +287,6 @@ class SliceService:
             if machine_file:
                 settings_files.append(str(machine_file))
 
-        # Create filament settings file with flattened inheritance
-        if profile.filament_id:
-            filament_file = await self._create_filament_settings_file(work_dir, profile)
-            if filament_file:
-                settings_files.append(str(filament_file))
-
         # Create process settings file with profile and overrides
         if profile.settings_overrides or overrides:
             settings_file = await self._create_settings_file(work_dir, profile, overrides)
@@ -351,31 +345,6 @@ class SliceService:
             return parent_data
         return data
 
-    async def _create_filament_settings_file(
-        self,
-        work_dir: Path,
-        profile: Profile,
-    ) -> Optional[Path]:
-        """Create filament settings JSON with flattened inheritance."""
-        if not profile.filament_id:
-            return None
-        filament_data = self._resolve_filament_chain(profile.filament_id)
-        filament_data["type"] = "filament"
-        filament_data["name"] = profile.filament_id
-        filament_data["from"] = "system"
-        # OrcaSlicer CLI defaults to cool_plate bed type regardless of bed_type setting.
-        # Force cool_plate temps to match textured_plate temps so correct bed temp is used.
-        if filament_data.get("textured_plate_temp"):
-            filament_data["cool_plate_temp"] = filament_data["textured_plate_temp"]
-            filament_data["cool_plate_temp_initial_layer"] = filament_data.get(
-                "textured_plate_temp_initial_layer", filament_data["textured_plate_temp"]
-            )
-        filament_file = work_dir / "filament.json"
-        with open(filament_file, "w") as f:
-            json.dump(filament_data, f, indent=2)
-        logger.debug(f"Created filament settings file: {profile.filament_id}")
-        return filament_file
-
     async def _create_settings_file(
         self,
         work_dir: Path,
@@ -398,7 +367,29 @@ class SliceService:
             "version": "1.0.0",
         }
 
-        # Add profile settings
+        # Inject bed temps from filament profile chain.
+        # OrcaSlicer CLI ignores filament settings from --load-settings,
+        # but accepts bed temp overrides in the process settings file.
+        if profile.filament_id:
+            filament_data = self._resolve_filament_chain(profile.filament_id)
+            textured_temp = filament_data.get("textured_plate_temp")
+            if textured_temp:
+                # CLI always uses cool_plate_temp regardless of bed_type setting,
+                # so force it to match textured_plate_temp for correct bed temp.
+                settings_data["cool_plate_temp"] = textured_temp
+                settings_data["cool_plate_temp_initial_layer"] = filament_data.get(
+                    "textured_plate_temp_initial_layer", textured_temp
+                )
+                settings_data["hot_plate_temp"] = filament_data.get("hot_plate_temp", textured_temp)
+                settings_data["hot_plate_temp_initial_layer"] = filament_data.get(
+                    "hot_plate_temp_initial_layer", textured_temp
+                )
+                settings_data["textured_plate_temp"] = textured_temp
+                settings_data["textured_plate_temp_initial_layer"] = filament_data.get(
+                    "textured_plate_temp_initial_layer", textured_temp
+                )
+
+        # Add profile settings (can override filament defaults)
         if profile.settings_overrides:
             settings_data.update(profile.settings_overrides)
 
