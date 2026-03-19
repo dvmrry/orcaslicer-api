@@ -408,6 +408,19 @@ class SliceService:
             gcode, flags=re.MULTILINE,
         )
 
+        # Remove "Changing filament" stage claim — firmware acts on this
+        # and tries to load filament, causing motor overload at cold nozzle
+        gcode = re.sub(
+            r'^\s*M1002 gcode_claim_action\s*:\s*4\s*$',
+            '; M1002 gcode_claim_action : 4 disabled (external spool)',
+            gcode, flags=re.MULTILINE,
+        )
+        gcode = re.sub(
+            r'^\s*M1002 set_filament_type:UNKNOWN\s*$',
+            '; M1002 set_filament_type:UNKNOWN disabled (external spool)',
+            gcode, flags=re.MULTILINE,
+        )
+
         # Remove flush config commands (AMS purge setup)
         gcode = re.sub(r'^\s*M620\.10\s.*$', '; M620.10 disabled (external spool)', gcode, flags=re.MULTILINE)
         gcode = re.sub(r'^\s*M620\.11\s.*$', '; M620.11 disabled (external spool)', gcode, flags=re.MULTILINE)
