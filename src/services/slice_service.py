@@ -346,13 +346,7 @@ class SliceService:
         }
         if resolved.get("machine_start_gcode"):
             start_gcode = resolved["machine_start_gcode"]
-            # Disable build plate detection — OrcaSlicer CLI sets curr_bed_type
-            # based on cool_plate_temp override which mismatches the actual plate,
-            # causing detection to fail and abort the print.
-            start_gcode = start_gcode.replace(
-                "build_plate_detect_flag=1",
-                "build_plate_detect_flag=0",
-            )
+            start_gcode = self._patch_start_gcode(start_gcode)
             machine_data["machine_start_gcode"] = start_gcode
         if resolved.get("machine_end_gcode"):
             machine_data["machine_end_gcode"] = resolved["machine_end_gcode"]
@@ -363,6 +357,50 @@ class SliceService:
 
         logger.debug(f"Created machine settings file: {profile.machine_id}")
         return machine_file
+
+    @staticmethod
+    def _patch_start_gcode(gcode: str) -> str:
+        """Patch the Bambu start gcode for external spool / headless use.
+
+        Removes or disables features that fail without Bambu Studio's
+        full integration:
+        - Build plate detection (curr_bed_type mismatch)
+        - AMS filament switching (fails with external spool)
+        - AMS remap commands
+        """
+        import re
+
+        # Disable build plate detection
+        gcode = gcode.replace(
+            "build_plate_detect_flag=1",
+            "build_plate_detect_flag=0",
+        )
+
+        # Remove AMS remap enable
+        gcode = re.sub(r'^\s*M620 M\s*;.*$', '; M620 M disabled (external spool)', gcode, flags=re.MULTILINE)
+        gcode = re.sub(r'^\s*G389\s*$', '; G389 disabled (external spool)', gcode, flags=re.MULTILINE)
+
+        # Remove AMS filament switch blocks (M620 S*A ... M621 S*A)
+        # These cause "Failed to get AMS mapping table" with external spool
+        gcode = re.sub(
+            r'^\s*M620 S\[?[^\]]*\]?A.*$',
+            '; M620 disabled (external spool)',
+            gcode, flags=re.MULTILINE,
+        )
+        gcode = re.sub(
+            r'^\s*M621 S\[?[^\]]*\]?A.*$',
+            '; M621 disabled (external spool)',
+            gcode, flags=re.MULTILINE,
+        )
+        gcode = re.sub(r'^\s*M628 S0\s*$', '; M628 disabled (external spool)', gcode, flags=re.MULTILINE)
+        gcode = re.sub(r'^\s*M629\s*$', '; M629 disabled (external spool)', gcode, flags=re.MULTILINE)
+
+        # Remove flush config commands (AMS purge setup)
+        gcode = re.sub(r'^\s*M620\.10\s.*$', '; M620.10 disabled (external spool)', gcode, flags=re.MULTILINE)
+        gcode = re.sub(r'^\s*M620\.11\s.*$', '; M620.11 disabled (external spool)', gcode, flags=re.MULTILINE)
+        gcode = re.sub(r'^\s*M620\.6\s.*$', '; M620.6 disabled (external spool)', gcode, flags=re.MULTILINE)
+
+        return gcode
 
     def _resolve_filament_chain(self, name: str) -> dict:
         """Resolve full filament profile inheritance chain from system profiles."""
