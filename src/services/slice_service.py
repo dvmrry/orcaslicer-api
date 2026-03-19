@@ -296,6 +296,9 @@ class SliceService:
         if settings_files:
             cmd.extend(["--load-settings", ";".join(settings_files)])
 
+        # Auto-orient model for optimal print orientation
+        cmd.extend(["--orient", "1"])
+
         # Add slice flag (0 = slice all plates)
         cmd.extend(["--slice", "0"])
 
