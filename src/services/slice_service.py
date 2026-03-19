@@ -475,20 +475,13 @@ class SliceService:
         # Inject bed temps from filament profile chain.
         # OrcaSlicer CLI ignores filament settings from --load-settings,
         # but accepts bed temp overrides in the process settings file.
+        # Only set the plate temp fields that match the actual bed_type —
+        # overriding cool_plate_temp causes curr_bed_type to resolve as
+        # "Cool Plate" which breaks the Z-offset conditional in start gcode.
         if profile.filament_id:
             filament_data = self._resolve_filament_chain(profile.filament_id)
             textured_temp = filament_data.get("textured_plate_temp")
             if textured_temp:
-                # CLI always uses cool_plate_temp regardless of bed_type setting,
-                # so force it to match textured_plate_temp for correct bed temp.
-                settings_data["cool_plate_temp"] = textured_temp
-                settings_data["cool_plate_temp_initial_layer"] = filament_data.get(
-                    "textured_plate_temp_initial_layer", textured_temp
-                )
-                settings_data["hot_plate_temp"] = filament_data.get("hot_plate_temp", textured_temp)
-                settings_data["hot_plate_temp_initial_layer"] = filament_data.get(
-                    "hot_plate_temp_initial_layer", textured_temp
-                )
                 settings_data["textured_plate_temp"] = textured_temp
                 settings_data["textured_plate_temp_initial_layer"] = filament_data.get(
                     "textured_plate_temp_initial_layer", textured_temp
