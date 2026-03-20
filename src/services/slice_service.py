@@ -375,16 +375,16 @@ class SliceService:
         """
         import re
 
-        # Disable build plate detection — the template may have this flag
-        # commented out (;M1002 set_flag ...) or set to 1. Either way,
-        # ensure it's uncommented and set to 0.
+        # Disable build plate detection — the system profile has this flag
+        # commented out as ";M1002 set_flag build_plate_detect_flag=1".
+        # Uncomment it and set to 0 in one step. Handle both =1 and =0 cases.
         gcode = gcode.replace(
-            ";M1002 set_flag build_plate_detect_flag=0",
+            ";M1002 set_flag build_plate_detect_flag=1",
             "M1002 set_flag build_plate_detect_flag=0",
         )
         gcode = gcode.replace(
-            "build_plate_detect_flag=1",
-            "build_plate_detect_flag=0",
+            ";M1002 set_flag build_plate_detect_flag=0",
+            "M1002 set_flag build_plate_detect_flag=0",
         )
 
         # Strip plate type detection command — pauses for confirmation
