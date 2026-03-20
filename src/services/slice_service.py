@@ -387,10 +387,17 @@ class SliceService:
             "M1002 set_flag build_plate_detect_flag=0",
         )
 
-        # Strip plate type detection command — pauses for confirmation
+        # Strip plate type detection commands — M972 S19 pauses for plate
+        # type confirmation, M972 S42 causes motor overload during detection
+        # when dispatched via MQTT (works in Bambu Studio but fails headless)
         gcode = re.sub(
             r'^\s*M972 S19\s.*$',
             '; M972 S19 disabled (skip plate detection)',
+            gcode, flags=re.MULTILINE,
+        )
+        gcode = re.sub(
+            r'^\s*M972 S42\s.*$',
+            '; M972 S42 disabled (skip plate detection)',
             gcode, flags=re.MULTILINE,
         )
 
