@@ -352,7 +352,9 @@ class SliceService:
             start_gcode = self._patch_start_gcode(start_gcode)
             machine_data["machine_start_gcode"] = start_gcode
         if resolved.get("machine_end_gcode"):
-            machine_data["machine_end_gcode"] = resolved["machine_end_gcode"]
+            end_gcode = resolved["machine_end_gcode"]
+            end_gcode = self._patch_end_gcode(end_gcode)
+            machine_data["machine_end_gcode"] = end_gcode
 
         machine_file = work_dir / "machine.json"
         with open(machine_file, "w") as f:
@@ -373,7 +375,13 @@ class SliceService:
         """
         import re
 
-        # Disable build plate detection
+        # Disable build plate detection — the template may have this flag
+        # commented out (;M1002 set_flag ...) or set to 1. Either way,
+        # ensure it's uncommented and set to 0.
+        gcode = gcode.replace(
+            ";M1002 set_flag build_plate_detect_flag=0",
+            "M1002 set_flag build_plate_detect_flag=0",
+        )
         gcode = gcode.replace(
             "build_plate_detect_flag=1",
             "build_plate_detect_flag=0",
@@ -449,6 +457,27 @@ class SliceService:
         # Fix sound volume — older profile uses L99/M99/N99 (max volume),
         # current Bambu Studio uses L50/M50/N50
         gcode = gcode.replace(" L99 ", " L50 ", )
+        gcode = gcode.replace(" M99 ", " M50 ")
+        gcode = gcode.replace(" N99 ", " N50 ")
+
+        return gcode
+
+    @staticmethod
+    def _patch_end_gcode(gcode: str) -> str:
+        """Patch the Bambu end gcode for external spool / headless use.
+
+        Removes AMS filament pullback and fixes finish sound volume.
+        """
+        import re
+
+        # Remove AMS filament pullback — M620 S65535 / T65535 / M621 S65535
+        # tries to retract filament back to AMS, causes issues with external spool
+        gcode = re.sub(r'^\s*M620 S65535\s*$', '; M620 S65535 disabled (external spool)', gcode, flags=re.MULTILINE)
+        gcode = re.sub(r'^\s*T65535\s*$', '; T65535 disabled (external spool)', gcode, flags=re.MULTILINE)
+        gcode = re.sub(r'^\s*M621 S65535\s*$', '; M621 S65535 disabled (external spool)', gcode, flags=re.MULTILINE)
+
+        # Fix finish sound volume — same L99/M99/N99 issue as start gcode
+        gcode = gcode.replace(" L99 ", " L50 ")
         gcode = gcode.replace(" M99 ", " M50 ")
         gcode = gcode.replace(" N99 ", " N50 ")
 
