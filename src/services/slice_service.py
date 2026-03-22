@@ -348,6 +348,16 @@ class SliceService:
             "name": profile.machine_id,
             "from": "system",
         }
+        # Include bed geometry so OrcaSlicer knows the print volume
+        for key in (
+            "printable_area",
+            "printable_height",
+            "bed_exclude_area",
+            "extruder_printable_area",
+            "extruder_printable_height",
+        ):
+            if resolved.get(key):
+                machine_data[key] = resolved[key]
         if resolved.get("machine_start_gcode"):
             start_gcode = resolved["machine_start_gcode"]
             start_gcode = self._patch_start_gcode(start_gcode)
