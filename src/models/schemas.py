@@ -90,6 +90,7 @@ class OutputOptions(BaseModel):
     gcode: bool = True
     project_3mf: bool = False
     metadata_json: bool = True
+    orient: bool = True
 
 
 class SliceJobCreate(BaseModel):
