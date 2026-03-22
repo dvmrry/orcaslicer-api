@@ -283,7 +283,8 @@ class SliceService:
 
         # Always create a machine settings file if machine_id is specified
         if profile.machine_id:
-            machine_file = await self._create_machine_settings_file(work_dir, profile)
+            use_ams = output_options.get("use_ams", True)
+            machine_file = await self._create_machine_settings_file(work_dir, profile, use_ams=use_ams)
             if machine_file:
                 settings_files.append(str(machine_file))
 
@@ -333,6 +334,7 @@ class SliceService:
         self,
         work_dir: Path,
         profile: Profile,
+        use_ams: bool = True,
     ) -> Optional[Path]:
         """Create a machine settings JSON file for OrcaSlicer.
 
@@ -360,11 +362,11 @@ class SliceService:
                 machine_data[key] = resolved[key]
         if resolved.get("machine_start_gcode"):
             start_gcode = resolved["machine_start_gcode"]
-            start_gcode = self._patch_start_gcode(start_gcode)
+            start_gcode = self._patch_start_gcode(start_gcode, use_ams=use_ams)
             machine_data["machine_start_gcode"] = start_gcode
         if resolved.get("machine_end_gcode"):
             end_gcode = resolved["machine_end_gcode"]
-            end_gcode = self._patch_end_gcode(end_gcode)
+            end_gcode = self._patch_end_gcode(end_gcode, use_ams=use_ams)
             machine_data["machine_end_gcode"] = end_gcode
 
         machine_file = work_dir / "machine.json"
@@ -375,20 +377,23 @@ class SliceService:
         return machine_file
 
     @staticmethod
-    def _patch_start_gcode(gcode: str) -> str:
-        """Patch the Bambu start gcode for external spool / headless use.
+    def _patch_start_gcode(gcode: str, use_ams: bool = True) -> str:
+        """Patch the Bambu start gcode for headless use.
 
-        Removes or disables features that fail without Bambu Studio's
-        full integration:
-        - Build plate detection (curr_bed_type mismatch)
-        - AMS filament switching (fails with external spool)
+        Always applied:
+        - Build plate detection disable (curr_bed_type mismatch in headless)
+        - Plate type detection strip (M972 S19/S42 — pauses or motor overload)
+        - Z-offset, vibration, sound fixes
+
+        Only when use_ams=False (external spool):
+        - AMS filament switching commands
         - AMS remap commands
+        - Tool change commands
+        - Flush config commands
         """
         import re
 
-        # Disable build plate detection — the system profile has this flag
-        # commented out as ";M1002 set_flag build_plate_detect_flag=1".
-        # Uncomment it and set to 0 in one step. Handle both =1 and =0 cases.
+        # Disable build plate detection — always needed for headless dispatch
         gcode = gcode.replace(
             ";M1002 set_flag build_plate_detect_flag=1",
             "M1002 set_flag build_plate_detect_flag=0",
@@ -398,9 +403,7 @@ class SliceService:
             "M1002 set_flag build_plate_detect_flag=0",
         )
 
-        # Strip plate type detection commands — M972 S19 pauses for plate
-        # type confirmation, M972 S42 causes motor overload during detection
-        # when dispatched via MQTT (works in Bambu Studio but fails headless)
+        # Strip plate type detection — always needed for headless dispatch
         gcode = re.sub(
             r'^\s*M972 S19\s.*$',
             '; M972 S19 disabled (skip plate detection)',
@@ -412,55 +415,45 @@ class SliceService:
             gcode, flags=re.MULTILINE,
         )
 
-        # Remove AMS remap enable
-        gcode = re.sub(r'^\s*M620 M\s*;.*$', '; M620 M disabled (external spool)', gcode, flags=re.MULTILINE)
-        gcode = re.sub(r'^\s*G389\s*$', '; G389 disabled (external spool)', gcode, flags=re.MULTILINE)
-
-        # Remove AMS filament switch blocks (M620 S*A ... M621 S*A)
-        # These cause "Failed to get AMS mapping table" with external spool
-        gcode = re.sub(
-            r'^\s*M620 S\[?[^\]]*\]?A.*$',
-            '; M620 disabled (external spool)',
-            gcode, flags=re.MULTILINE,
-        )
-        gcode = re.sub(
-            r'^\s*M621 S\[?[^\]]*\]?A.*$',
-            '; M621 disabled (external spool)',
-            gcode, flags=re.MULTILINE,
-        )
-        gcode = re.sub(r'^\s*M628 S0\s*$', '; M628 disabled (external spool)', gcode, flags=re.MULTILINE)
-        gcode = re.sub(r'^\s*M629\s*$', '; M629 disabled (external spool)', gcode, flags=re.MULTILINE)
-
-        # Remove tool change commands inside filament switch blocks
-        # T[initial_no_support_extruder] triggers filament load at cold nozzle = motor overload
-        gcode = re.sub(
-            r'^\s*T\[initial_no_support_extruder\]\s*$',
-            '; T[initial_no_support_extruder] disabled (external spool)',
-            gcode, flags=re.MULTILINE,
-        )
-        gcode = re.sub(
-            r'^\s*T\[initial_extruder\]\s*$',
-            '; T[initial_extruder] disabled (external spool)',
-            gcode, flags=re.MULTILINE,
-        )
-
-        # Remove "Changing filament" stage claim — firmware acts on this
-        # and tries to load filament, causing motor overload at cold nozzle
-        gcode = re.sub(
-            r'^\s*M1002 gcode_claim_action\s*:\s*4\s*$',
-            '; M1002 gcode_claim_action : 4 disabled (external spool)',
-            gcode, flags=re.MULTILINE,
-        )
-        gcode = re.sub(
-            r'^\s*M1002 set_filament_type:UNKNOWN\s*$',
-            '; M1002 set_filament_type:UNKNOWN disabled (external spool)',
-            gcode, flags=re.MULTILINE,
-        )
-
-        # Remove flush config commands (AMS purge setup)
-        gcode = re.sub(r'^\s*M620\.10\s.*$', '; M620.10 disabled (external spool)', gcode, flags=re.MULTILINE)
-        gcode = re.sub(r'^\s*M620\.11\s.*$', '; M620.11 disabled (external spool)', gcode, flags=re.MULTILINE)
-        gcode = re.sub(r'^\s*M620\.6\s.*$', '; M620.6 disabled (external spool)', gcode, flags=re.MULTILINE)
+        # AMS commands — only strip for external spool
+        if not use_ams:
+            gcode = re.sub(r'^\s*M620 M\s*;.*$', '; M620 M disabled (external spool)', gcode, flags=re.MULTILINE)
+            gcode = re.sub(r'^\s*G389\s*$', '; G389 disabled (external spool)', gcode, flags=re.MULTILINE)
+            gcode = re.sub(
+                r'^\s*M620 S\[?[^\]]*\]?A.*$',
+                '; M620 disabled (external spool)',
+                gcode, flags=re.MULTILINE,
+            )
+            gcode = re.sub(
+                r'^\s*M621 S\[?[^\]]*\]?A.*$',
+                '; M621 disabled (external spool)',
+                gcode, flags=re.MULTILINE,
+            )
+            gcode = re.sub(r'^\s*M628 S0\s*$', '; M628 disabled (external spool)', gcode, flags=re.MULTILINE)
+            gcode = re.sub(r'^\s*M629\s*$', '; M629 disabled (external spool)', gcode, flags=re.MULTILINE)
+            gcode = re.sub(
+                r'^\s*T\[initial_no_support_extruder\]\s*$',
+                '; T[initial_no_support_extruder] disabled (external spool)',
+                gcode, flags=re.MULTILINE,
+            )
+            gcode = re.sub(
+                r'^\s*T\[initial_extruder\]\s*$',
+                '; T[initial_extruder] disabled (external spool)',
+                gcode, flags=re.MULTILINE,
+            )
+            gcode = re.sub(
+                r'^\s*M1002 gcode_claim_action\s*:\s*4\s*$',
+                '; M1002 gcode_claim_action : 4 disabled (external spool)',
+                gcode, flags=re.MULTILINE,
+            )
+            gcode = re.sub(
+                r'^\s*M1002 set_filament_type:UNKNOWN\s*$',
+                '; M1002 set_filament_type:UNKNOWN disabled (external spool)',
+                gcode, flags=re.MULTILINE,
+            )
+            gcode = re.sub(r'^\s*M620\.10\s.*$', '; M620.10 disabled (external spool)', gcode, flags=re.MULTILINE)
+            gcode = re.sub(r'^\s*M620\.11\s.*$', '; M620.11 disabled (external spool)', gcode, flags=re.MULTILINE)
+            gcode = re.sub(r'^\s*M620\.6\s.*$', '; M620.6 disabled (external spool)', gcode, flags=re.MULTILINE)
 
         # Fix Z-offset for textured PEI plate. CLI sets curr_bed_type to
         # "Cool Plate" (because we override cool_plate_temp for correct bed
@@ -481,18 +474,18 @@ class SliceService:
         return gcode
 
     @staticmethod
-    def _patch_end_gcode(gcode: str) -> str:
-        """Patch the Bambu end gcode for external spool / headless use.
+    def _patch_end_gcode(gcode: str, use_ams: bool = True) -> str:
+        """Patch the Bambu end gcode for headless use.
 
-        Removes AMS filament pullback and fixes finish sound volume.
+        Fixes finish sound volume. Only strips AMS pullback for external spool.
         """
         import re
 
-        # Remove AMS filament pullback — M620 S65535 / T65535 / M621 S65535
-        # tries to retract filament back to AMS, causes issues with external spool
-        gcode = re.sub(r'^\s*M620 S65535\s*$', '; M620 S65535 disabled (external spool)', gcode, flags=re.MULTILINE)
-        gcode = re.sub(r'^\s*T65535\s*$', '; T65535 disabled (external spool)', gcode, flags=re.MULTILINE)
-        gcode = re.sub(r'^\s*M621 S65535\s*$', '; M621 S65535 disabled (external spool)', gcode, flags=re.MULTILINE)
+        # Remove AMS filament pullback — only for external spool
+        if not use_ams:
+            gcode = re.sub(r'^\s*M620 S65535\s*$', '; M620 S65535 disabled (external spool)', gcode, flags=re.MULTILINE)
+            gcode = re.sub(r'^\s*T65535\s*$', '; T65535 disabled (external spool)', gcode, flags=re.MULTILINE)
+            gcode = re.sub(r'^\s*M621 S65535\s*$', '; M621 S65535 disabled (external spool)', gcode, flags=re.MULTILINE)
 
         # Fix finish sound volume — same L99/M99/N99 issue as start gcode
         gcode = gcode.replace(" L99 ", " L50 ")

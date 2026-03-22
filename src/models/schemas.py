@@ -91,6 +91,7 @@ class OutputOptions(BaseModel):
     project_3mf: bool = False
     metadata_json: bool = True
     orient: bool = True
+    use_ams: bool = True
 
 
 class SliceJobCreate(BaseModel):
