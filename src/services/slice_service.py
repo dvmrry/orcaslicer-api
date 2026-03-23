@@ -37,6 +37,38 @@ from .storage_service import storage_service
 class SliceService:
     """Service for managing slice jobs and OrcaSlicer CLI integration."""
 
+    # Keys that are profile metadata, not slicer settings — strip from
+    # resolved profiles before writing settings.json for the CLI.
+    _PROFILE_METADATA_KEYS = frozenset({
+        "inherits", "include", "instantiation", "compatible_printers",
+        "compatible_printers_condition", "setting_id", "from", "type",
+        "name", "version", "filament_vendor", "filament_cost",
+        "filament_id",
+    })
+
+    @staticmethod
+    def _flatten_profile_arrays(data: dict, variant_index: int = 0) -> dict:
+        """Flatten array values by taking the specified extruder variant index.
+
+        BBL profiles use arrays for multi-variant support. P2S has two
+        variants: [0] = Direct Drive Standard, [1] = Direct Drive High Flow.
+        For standard nozzle printing, take index 0.
+
+        Array entries with value ``"nil"`` (BBL sentinel for "use default")
+        are dropped so OrcaSlicer falls back to its own defaults.
+        """
+        result: dict = {}
+        for key, value in data.items():
+            if isinstance(value, list) and len(value) > 0:
+                idx = min(variant_index, len(value) - 1)
+                val = value[idx]
+                if val == "nil":
+                    continue
+                result[key] = val
+            else:
+                result[key] = value
+        return result
+
     @staticmethod
     def _generate_job_id() -> str:
         """Generate unique job ID."""
@@ -288,8 +320,8 @@ class SliceService:
             if machine_file:
                 settings_files.append(str(machine_file))
 
-        # Create process settings file with profile and overrides
-        if profile.settings_overrides or overrides:
+        # Create process settings file with resolved BBL profiles + overrides
+        if profile.process_id or profile.filament_id or profile.settings_overrides or overrides:
             settings_file = await self._create_settings_file(work_dir, profile, overrides)
             if settings_file:
                 settings_files.append(str(settings_file))
@@ -315,20 +347,55 @@ class SliceService:
 
         return cmd
 
-    def _resolve_machine_chain(self, name: str) -> dict:
-        """Resolve full machine profile inheritance chain from system profiles."""
-        base = Path(settings.orca_cli_path).parent / "resources" / "profiles" / "BBL" / "machine"
+    def _resolve_bbl_profile(self, name: str, profile_type: str) -> dict:
+        """Resolve full BBL profile inheritance chain including includes.
+
+        Resolution order (lowest to highest priority):
+        1. Ancestor chain via ``inherits`` (grandparent → parent → ...)
+        2. Templates merged via ``include`` (semicolon-separated names)
+        3. Leaf profile's own keys
+        """
+        base = (
+            Path(settings.orca_cli_path).parent
+            / "resources"
+            / "profiles"
+            / "BBL"
+            / profile_type
+        )
         target = base / f"{name}.json"
         if not target.exists():
             return {}
         with open(target) as f:
             data = json.load(f)
+
+        # Step 1: resolve parent chain
+        resolved: dict = {}
         parent = data.get("inherits", "")
         if parent:
-            parent_data = self._resolve_machine_chain(parent)
-            parent_data.update(data)
-            return parent_data
-        return data
+            resolved = self._resolve_bbl_profile(parent, profile_type)
+
+        # Step 2: merge include templates (between parent and leaf)
+        include = data.get("include", "")
+        if include:
+            for tmpl in include.split(";"):
+                tmpl = tmpl.strip()
+                if tmpl:
+                    tmpl_path = base / f"{tmpl}.json"
+                    if tmpl_path.exists():
+                        with open(tmpl_path) as f:
+                            resolved.update(json.load(f))
+
+        # Step 3: leaf keys win
+        resolved.update(data)
+        return resolved
+
+    def _resolve_machine_chain(self, name: str) -> dict:
+        """Resolve full machine profile inheritance chain from system profiles."""
+        return self._resolve_bbl_profile(name, "machine")
+
+    def _resolve_process_chain(self, name: str) -> dict:
+        """Resolve full process profile inheritance chain from system profiles."""
+        return self._resolve_bbl_profile(name, "process")
 
     async def _create_machine_settings_file(
         self,
@@ -496,18 +563,7 @@ class SliceService:
 
     def _resolve_filament_chain(self, name: str) -> dict:
         """Resolve full filament profile inheritance chain from system profiles."""
-        base = Path(settings.orca_cli_path).parent / "resources" / "profiles" / "BBL" / "filament"
-        target = base / f"{name}.json"
-        if not target.exists():
-            return {}
-        with open(target) as f:
-            data = json.load(f)
-        parent = data.get("inherits", "")
-        if parent:
-            parent_data = self._resolve_filament_chain(parent)
-            parent_data.update(data)
-            return parent_data
-        return data
+        return self._resolve_bbl_profile(name, "filament")
 
     async def _create_settings_file(
         self,
@@ -517,44 +573,69 @@ class SliceService:
     ) -> Optional[Path]:
         """Create a settings JSON file for OrcaSlicer.
 
-        OrcaSlicer requires specific metadata fields in the JSON:
-        - type: "machine", "process", or "filament"
-        - name: preset name
-        - from: "system", "User", or "user"
-        - version: version string (optional)
+        Resolution priority (lowest → highest):
+        1. Resolved BBL process profile chain (speeds, accels, layers)
+        2. Resolved BBL filament profile chain (temps, fans, flow, retraction)
+        3. Profile settings_overrides (user's saved tuning)
+        4. Job overrides (per-job tweaks)
+
+        OrcaSlicer CLI ignores separate filament settings files passed via
+        ``--load-settings``, so filament values are injected into the
+        process settings file.
         """
         # Start with OrcaSlicer required metadata
         settings_data = {
-            "type": "process",  # Default to process settings
+            "type": "process",
             "name": profile.name or "API Generated Profile",
-            "from": "user",  # Mark as user-generated
+            "from": "user",
             "version": "1.0.0",
         }
 
-        # Inject bed temps from filament profile chain.
-        # OrcaSlicer CLI ignores filament settings from --load-settings,
-        # but accepts bed temp overrides in the process settings file.
-        # CLI hardcodes cool_plate_temp as bed temp regardless of bed_type,
-        # so we must set it. This causes curr_bed_type="Cool Plate" which
-        # breaks the Z-offset conditional — fixed in _patch_start_gcode.
-        if profile.filament_id:
-            filament_data = self._resolve_filament_chain(profile.filament_id)
-            textured_temp = filament_data.get("textured_plate_temp")
-            if textured_temp:
-                settings_data["cool_plate_temp"] = textured_temp
-                settings_data["cool_plate_temp_initial_layer"] = filament_data.get(
-                    "textured_plate_temp_initial_layer", textured_temp
-                )
-                settings_data["textured_plate_temp"] = textured_temp
-                settings_data["textured_plate_temp_initial_layer"] = filament_data.get(
-                    "textured_plate_temp_initial_layer", textured_temp
-                )
+        # Resolve full BBL process profile chain (speeds, accels, layers, etc.)
+        if profile.process_id:
+            resolved = self._resolve_process_chain(profile.process_id)
+            resolved = self._flatten_profile_arrays(resolved)
+            for key in self._PROFILE_METADATA_KEYS:
+                resolved.pop(key, None)
+            settings_data.update(resolved)
+            logger.info(
+                f"Resolved process chain '{profile.process_id}': "
+                f"outer_wall_speed={resolved.get('outer_wall_speed')}, "
+                f"inner_wall_speed={resolved.get('inner_wall_speed')}, "
+                f"travel_speed={resolved.get('travel_speed')}, "
+                f"default_acceleration={resolved.get('default_acceleration')}"
+            )
 
-        # Add profile settings (can override filament defaults)
+        # Resolve full BBL filament profile chain (temps, fans, flow, retraction).
+        # Injected into the process settings file because CLI ignores filament files.
+        # CLI hardcodes cool_plate_temp as bed temp regardless of bed_type, so we
+        # must also set it — this causes curr_bed_type="Cool Plate" which breaks
+        # the Z-offset conditional, fixed in _patch_start_gcode.
+        if profile.filament_id:
+            resolved = self._resolve_filament_chain(profile.filament_id)
+            resolved = self._flatten_profile_arrays(resolved)
+            for key in self._PROFILE_METADATA_KEYS:
+                resolved.pop(key, None)
+            # Also mirror textured_plate_temp → cool_plate_temp for CLI bed-temp hack
+            textured_temp = resolved.get("textured_plate_temp")
+            if textured_temp:
+                resolved["cool_plate_temp"] = textured_temp
+                resolved["cool_plate_temp_initial_layer"] = resolved.get(
+                    "textured_plate_temp_initial_layer", textured_temp
+                )
+            settings_data.update(resolved)
+            logger.info(
+                f"Resolved filament chain '{profile.filament_id}': "
+                f"nozzle_temperature={resolved.get('nozzle_temperature')}, "
+                f"textured_plate_temp={textured_temp}, "
+                f"filament_max_volumetric_speed={resolved.get('filament_max_volumetric_speed')}"
+            )
+
+        # Add profile settings (can override resolved BBL defaults)
         if profile.settings_overrides:
             settings_data.update(profile.settings_overrides)
 
-        # Apply job-specific overrides
+        # Apply job-specific overrides (highest priority)
         if overrides:
             settings_data.update(overrides)
 
@@ -567,12 +648,16 @@ class SliceService:
         elif isinstance(settings_data["layer_gcode"], str) and "G92 E0" not in settings_data["layer_gcode"]:
             settings_data["layer_gcode"] = settings_data["layer_gcode"] + "\nG92 E0"
 
+        # Safety: strip inherits/include from final output
+        settings_data.pop("inherits", None)
+        settings_data.pop("include", None)
+
         # Write settings to file
         settings_file = work_dir / "settings.json"
         with open(settings_file, "w") as f:
             json.dump(settings_data, f, indent=2)
 
-        logger.debug(f"Created settings file with metadata: type={settings_data.get('type')}, name={settings_data.get('name')}, from={settings_data.get('from')}")
+        logger.debug(f"Created settings file: type={settings_data.get('type')}, name={settings_data.get('name')}")
         return settings_file
 
     def _convert_settings_types(self, settings: Dict[str, Any]) -> Dict[str, Any]:
