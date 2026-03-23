@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import math
 import re
 import secrets
 import shutil
@@ -356,7 +355,9 @@ class SliceService:
 
         return cmd
 
-    def _resolve_bbl_profile(self, name: str, profile_type: str) -> dict:
+    def _resolve_bbl_profile(
+        self, name: str, profile_type: str, _visited: Optional[set] = None,
+    ) -> dict:
         """Resolve full BBL profile inheritance chain including includes.
 
         Resolution order (lowest to highest priority):
@@ -364,6 +365,14 @@ class SliceService:
         2. Templates merged via ``include`` (semicolon-separated names)
         3. Leaf profile's own keys
         """
+        if _visited is None:
+            _visited = set()
+        key = (profile_type, name)
+        if key in _visited:
+            logger.warning(f"Circular inherits detected in {profile_type}/{name}, breaking chain")
+            return {}
+        _visited.add(key)
+
         base = (
             Path(settings.orca_cli_path).parent
             / "resources"
@@ -381,7 +390,7 @@ class SliceService:
         resolved: dict = {}
         parent = data.get("inherits", "")
         if parent:
-            resolved = self._resolve_bbl_profile(parent, profile_type)
+            resolved = self._resolve_bbl_profile(parent, profile_type, _visited)
 
         # Step 2: merge include templates (between parent and leaf)
         include = data.get("include", "")
@@ -466,7 +475,6 @@ class SliceService:
         - Tool change commands
         - Flush config commands
         """
-        import re
 
         # Disable build plate detection — always needed for headless dispatch
         gcode = gcode.replace(
@@ -554,7 +562,6 @@ class SliceService:
 
         Fixes finish sound volume. Only strips AMS pullback for external spool.
         """
-        import re
 
         # Remove AMS filament pullback — only for external spool
         if not use_ams:
