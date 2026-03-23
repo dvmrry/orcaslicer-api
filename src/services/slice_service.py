@@ -40,10 +40,9 @@ class SliceService:
     # Keys that are profile metadata, not slicer settings — strip from
     # resolved profiles before writing settings.json for the CLI.
     _PROFILE_METADATA_KEYS = frozenset({
-        "inherits", "include", "instantiation", "compatible_printers",
-        "compatible_printers_condition", "setting_id", "from", "type",
-        "name", "version", "filament_vendor", "filament_cost",
-        "filament_id",
+        "inherits", "include", "instantiation", "setting_id",
+        "from", "type", "name", "version",
+        "filament_vendor", "filament_cost", "filament_id",
     })
 
     @staticmethod
@@ -654,6 +653,12 @@ class SliceService:
         # Safety: strip inherits/include from final output
         settings_data.pop("inherits", None)
         settings_data.pop("include", None)
+
+        # Explicitly clear compatibility fields — --load-settings applies as
+        # overrides on the default preset, so the base preset's compatibility
+        # conditions would still be evaluated unless we explicitly clear them.
+        settings_data["compatible_printers"] = []
+        settings_data["compatible_printers_condition"] = ""
 
         # Write settings to file
         settings_file = work_dir / "settings.json"
