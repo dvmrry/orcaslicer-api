@@ -665,6 +665,12 @@ class SliceService:
         settings_data["type"] = "process"
         settings_data["name"] = profile.name or "API Generated Profile"
         settings_data["from"] = "user"
+        # OrcaSlicer validates that the process preset is compatible with the
+        # loaded machine. compatible_printers MUST contain the machine name —
+        # an empty list means "compatible with nothing" and absent means
+        # "use default preset's value" which may also fail.
+        if profile.machine_id:
+            settings_data["compatible_printers"] = [profile.machine_id]
 
         # Write settings to file
         settings_file = work_dir / "settings.json"
