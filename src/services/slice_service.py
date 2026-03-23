@@ -39,11 +39,20 @@ class SliceService:
 
     # Keys that are profile metadata, not slicer settings — strip from
     # resolved profiles before writing settings.json for the CLI.
+    # Keys that are profile metadata or BBL-internal hardware linkage fields.
+    # Strip from resolved profiles before writing settings.json for the CLI.
+    # BBL extruder variant/ID fields trigger compatibility validation against
+    # the machine profile — our minimal machine.json doesn't define extruders.
     _PROFILE_METADATA_KEYS = frozenset({
         "inherits", "include", "instantiation", "setting_id",
         "compatible_printers", "compatible_printers_condition",
         "from", "type", "name", "version",
         "filament_vendor", "filament_cost", "filament_id",
+        "print_settings_id", "filament_settings_id",
+        # BBL hardware linkage — triggers extruder compat validation
+        "print_extruder_id", "print_extruder_variant",
+        "filament_extruder_variant", "required_nozzle_HRC",
+        "printer_extruder_id", "printer_extruder_variant",
     })
 
     @staticmethod
