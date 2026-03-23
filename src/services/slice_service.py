@@ -397,6 +397,14 @@ class SliceService:
         """Resolve full process profile inheritance chain from system profiles."""
         return self._resolve_bbl_profile(name, "process")
 
+    # Machine profile keys that cause segfaults in headless mode (thumbnail
+    # rendering requires GPU) or are pure metadata not needed for slicing.
+    _MACHINE_EXCLUDE_KEYS = frozenset({
+        "thumbnails", "thumbnails_format", "thumbnail_size",
+        "inherits", "include", "instantiation", "setting_id",
+        "compatible_printers", "compatible_printers_condition",
+    })
+
     async def _create_machine_settings_file(
         self,
         work_dir: Path,
@@ -405,11 +413,11 @@ class SliceService:
     ) -> Optional[Path]:
         """Create a machine settings JSON file for OrcaSlicer.
 
-        Resolves the system machine profile inheritance chain to extract
-        machine_start_gcode and machine_end_gcode (calibration, homing,
-        purge sequences). Only these gcode templates are included — the
-        full profile causes segfaults in headless mode due to thumbnail
-        rendering settings.
+        Resolves the full system machine profile inheritance chain and
+        includes all fields except thumbnail rendering settings (which
+        cause segfaults in headless mode). This ensures OrcaSlicer has
+        the extruder variant list, nozzle specs, and other fields needed
+        for process compatibility validation.
         """
         resolved = self._resolve_machine_chain(profile.machine_id)
         machine_data = {
@@ -417,24 +425,19 @@ class SliceService:
             "name": profile.machine_id,
             "from": "system",
         }
-        # Include bed geometry so OrcaSlicer knows the print volume
-        for key in (
-            "printable_area",
-            "printable_height",
-            "bed_exclude_area",
-            "extruder_printable_area",
-            "extruder_printable_height",
-        ):
-            if resolved.get(key):
-                machine_data[key] = resolved[key]
-        if resolved.get("machine_start_gcode"):
-            start_gcode = resolved["machine_start_gcode"]
-            start_gcode = self._patch_start_gcode(start_gcode, use_ams=use_ams)
-            machine_data["machine_start_gcode"] = start_gcode
-        if resolved.get("machine_end_gcode"):
-            end_gcode = resolved["machine_end_gcode"]
-            end_gcode = self._patch_end_gcode(end_gcode, use_ams=use_ams)
-            machine_data["machine_end_gcode"] = end_gcode
+
+        # Include all resolved fields except those known to cause segfaults
+        for key, value in resolved.items():
+            if key in self._MACHINE_EXCLUDE_KEYS:
+                continue
+            if key in ("type", "name", "from"):
+                continue  # already set above
+            if key == "machine_start_gcode":
+                machine_data[key] = self._patch_start_gcode(value, use_ams=use_ams)
+            elif key == "machine_end_gcode":
+                machine_data[key] = self._patch_end_gcode(value, use_ams=use_ams)
+            else:
+                machine_data[key] = value
 
         machine_file = work_dir / "machine.json"
         with open(machine_file, "w") as f:
