@@ -29,6 +29,8 @@ class ModelListResponse(BaseModel):
 class ProfileCreate(BaseModel):
     """Create profile request."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     description: Optional[str] = None
     source: str = "user"
@@ -41,6 +43,8 @@ class ProfileCreate(BaseModel):
 
 class ProfileUpdate(BaseModel):
     """Update profile request."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: Optional[str] = None
     description: Optional[str] = None
@@ -97,7 +101,7 @@ class OutputOptions(BaseModel):
 class SliceJobCreate(BaseModel):
     """Create slice job request."""
 
-    model_config = ConfigDict(protected_namespaces=())
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
 
     model_id: str
     profile_id: str
